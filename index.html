@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Garden</title>
+<meta name="description" content="Garden. Work In Progress.">
+<meta name="theme-color" content="#cfe3f1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161826" media="(prefers-color-scheme: dark)">
+<link rel="preload" href="/fonts/CormorantGaramond-italic-400.woff2" as="font" type="font/woff2" crossorigin>
+<style>
+@font-face{font-family:"Cormorant Garamond";font-style:italic;font-weight:400;font-display:block;src:url("/fonts/CormorantGaramond-italic-400.woff2") format("woff2")}
+html,body{margin:0;height:100%;overflow:hidden}
+body{background:linear-gradient(#bcd7ea 0%,#e8f0f2 70%,#f6f1e4 100%)}
+@media (prefers-color-scheme:dark){body{background:linear-gradient(#10121f 0%,#232540 70%,#3a3348 100%)}}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+noscript{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:italic 400 clamp(2.5rem,9vw,6rem) "Cormorant Garamond",Georgia,serif;color:#1c1b19}
+@media (prefers-color-scheme:dark){noscript{color:#f2eee2}}
+</style>
+</head>
+<body>
+<noscript>Work In Progress</noscript>
+<script type="module">
+import * as THREE from '/vendor/three.module.min.js';
+
+const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const speed = calm ? 0.15 : 1;
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+camera.position.set(0, 0, 30);
+
+// textures de nuages dessinées à la main sur un canvas
+function cloudTexture(seed) {
+  let s = seed;
+  const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 256;
+  const g = c.getContext('2d');
+  for (let i = 0; i < 22; i++) {
+    const t = i / 22;
+    const x = 90 + rnd() * 332;
+    const y = 150 - Math.sin(rnd() * Math.PI) * 60 + rnd() * 20;
+    const r = 40 + rnd() * 50 * (1 - Math.abs(x - 256) / 300);
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    const shade = Math.round(255 - (y / 256) * 40);
+    grad.addColorStop(0, `rgba(${shade},${Math.min(255, shade + 8)},255,0.55)`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+const textures = [11, 23, 37, 51].map(cloudTexture);
+
+const tint = dark ? 0x8f8fb8 : 0xffffff;
+const clouds = [];
+const N = 34;
+for (let i = 0; i < N; i++) {
+  const z = -45 + (i / N) * 60 + Math.random() * 4;        // -45 .. +15
+  const front = z > 2;
+  const mat = new THREE.SpriteMaterial({
+    map: textures[i % textures.length], color: tint,
+    transparent: true, depthWrite: false,
+    opacity: front ? 0.16 : 0.85
+  });
+  const sp = new THREE.Sprite(mat);
+  const w = 16 + Math.random() * 20;
+  sp.scale.set(w, w * 0.5, 1);
+  sp.position.set((Math.random() - 0.5) * 120, (Math.random() - 0.5) * 22, z);
+  sp.userData = {
+    v: (0.25 + Math.random() * 0.35) * (1 + (z + 45) / 80),   // lent, plus rapide au premier plan
+    base: mat.opacity, y0: sp.position.y, ph: Math.random() * 6.28
+  };
+  scene.add(sp);
+  clouds.push(sp);
+}
+
+// texte "Work In Progress" dans les nuages
+function textTexture(lines) {
+  const size = 300, pad = 80;
+  const c = document.createElement('canvas');
+  const g = c.getContext('2d');
+  g.font = `italic 400 ${size}px "Cormorant Garamond", Georgia, serif`;
+  const w = Math.max(...lines.map(l => g.measureText(l).width)) + pad * 2;
+  const h = size * 1.05 * lines.length + pad;
+  c.width = Math.ceil(w); c.height = Math.ceil(h);
+  g.font = `italic 400 ${size}px "Cormorant Garamond", Georgia, serif`;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.shadowColor = dark ? 'rgba(180,180,255,0.55)' : 'rgba(255,255,255,0.9)';
+  g.shadowBlur = 40;
+  g.fillStyle = dark ? '#f2eee2' : '#26303a';
+  lines.forEach((l, i) => g.fillText(l, c.width / 2, pad / 2 + size * 1.05 * (i + 0.5)));
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return { tex, ratio: c.width / c.height };
+}
+
+let label = null, layout = '';
+function buildLabel() {
+  const portrait = camera.aspect < 0.9;
+  const key = portrait ? 'p' : 'l';
+  if (key === layout) return;
+  layout = key;
+  if (label) { scene.remove(label); label.material.map.dispose(); label.material.dispose(); label.geometry.dispose(); }
+  const { tex, ratio } = textTexture(portrait ? ['Work In', 'Progress'] : ['Work In Progress']);
+  label = new THREE.Mesh(
+    new THREE.PlaneGeometry(1, 1 / ratio),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.92 })
+  );
+  label.userData.ratio = ratio;
+  label.position.z = 0;
+  scene.add(label);
+  fit();
+}
+function fit() {
+  if (!label) return;
+  const visH = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.position.z;
+  const visW = visH * camera.aspect;
+  const w = Math.min(visW * (camera.aspect < 0.9 ? 0.86 : 0.58), visH * 0.8 * label.userData.ratio);
+  label.scale.set(w, w, 1);
+}
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  buildLabel(); fit();
+}
+addEventListener('resize', resize);
+
+const range = 70;
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
+  for (const c of clouds) {
+    const d = c.userData;
+    c.position.x += d.v * speed * dt;
+    if (c.position.x > range) c.position.x = -range;
+    c.position.y = d.y0 + Math.sin(t * 0.08 * speed + d.ph) * 0.8;
+    const edge = 1 - Math.pow(Math.abs(c.position.x) / range, 4);   // fondu aux bords : la boucle ne se voit pas
+    c.material.opacity = d.base * Math.max(0, edge);
+  }
+  if (label) label.position.y = Math.sin(t * 0.25 * speed) * 0.35;
+  camera.position.x = Math.sin(t * 0.04 * speed) * 1.2;
+  camera.lookAt(0, 0, 0);
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+await document.fonts.load('italic 400 100px "Cormorant Garamond"');
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
